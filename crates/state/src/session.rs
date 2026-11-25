@@ -5,7 +5,7 @@ use std::time::Duration;
 use anyhow::Error;
 use gpui::{Context, Entity, EventEmitter, Task};
 use i18n::t;
-use music::link::Linked;
+use music::link::{self, Linked};
 use music::{
     Capabilities, Catalog, MusicApi, MusicProvider, PlaybackFactory, PromptSink, ProviderSession,
     Shape, SignIn, SignInFailure, SignInProblem, SignInPrompt, UserProfile,
@@ -364,11 +364,19 @@ impl Session {
     }
 
     /// What `link` points at, with the slug of the provider whose link it is. Every provider is
-    /// asked, not only the current one.
+    /// asked, not only the current one; a link the command line printed for a provider with no
+    /// share url of its own is read by its `sonora://<slug>/<kind>?id=<id>` shape.
     pub fn read_link(&self, link: &str) -> Option<(&'static str, Linked)> {
-        self.providers
+        if let Some(found) = self
+            .providers
             .iter()
             .find_map(|provider| Some((provider.slug(), provider.link(link)?)))
+        {
+            return Some(found);
+        }
+        let (slug, linked) = control_link(link)?;
+        let provider = self.providers.iter().find(|provider| provider.slug() == slug.as_str())?;
+        Some((provider.slug(), linked))
     }
 
     /// The name of the provider `slug` and whether it has an account stored.
@@ -1207,4 +1215,28 @@ fn overlaps(a: &Path, b: &Path) -> bool {
     let a = std::fs::canonicalize(a).unwrap_or_else(|_| a.to_path_buf());
     let b = std::fs::canonicalize(b).unwrap_or_else(|_| b.to_path_buf());
     a == b || a.starts_with(&b) || b.starts_with(&a)
+}
+
+/// A link the command line prints for a search hit whose provider has no share url of its own,
+/// as `sonora://subsonic/track?id=<id>`. It names the provider and keeps the id in the query, so
+/// an id carrying a slash or a space survives being handed back to `play`, `add` or `play-next`.
+fn control_link(text: &str) -> Option<(String, Linked)> {
+    let url = link::address(text)?;
+    if url.scheme() != "sonora" {
+        return None;
+    }
+    let slug = url.host_str()?.to_owned();
+    let kind = match link::segments(&url).as_slice() {
+        [kind] => *kind,
+        _ => return None,
+    };
+    let id = link::query(&url, "id")?;
+    let linked = match kind {
+        "track" => Linked::Track(id),
+        "album" => Linked::Album(id),
+        "artist" => Linked::Artist(id),
+        "playlist" => Linked::Playlist(id),
+        _ => return None,
+    };
+    Some((slug, linked))
 }

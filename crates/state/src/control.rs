@@ -376,6 +376,7 @@ impl Control {
             artists: artists.unwrap_or_default(),
         };
         let library = self.library.read(cx).state(Shelf::Streaming);
+        let slug = self.session.read(cx).provider_slug().unwrap_or_default();
         let ranked = search::rank(
             library.tracks(),
             library.albums(),
@@ -386,7 +387,7 @@ impl Control {
         );
         Ok(ranked
             .into_iter()
-            .filter_map(|hit| wire_hit(hit, client))
+            .filter_map(|hit| wire_hit(hit, client, slug))
             .filter(|hit| query.kind.is_none_or(|kind| hit.kind == kind))
             .take(query.limit.into())
             .collect())
@@ -609,7 +610,7 @@ fn play(playback: &mut Playback, command: PlaybackCommand, cx: &mut Context<Play
 
 /// A search hit as the command line lists it, or `None` for one with no link to act on, as an
 /// artist drawn from a track that names no id.
-fn wire_hit(hit: Hit, client: &dyn MusicApi) -> Option<wire::Hit> {
+fn wire_hit(hit: Hit, client: &dyn MusicApi, slug: &str) -> Option<wire::Hit> {
     let (kind, media, id, title, by, duration) = match hit {
         Hit::Song(track) => (
             Kind::Song,
@@ -644,7 +645,18 @@ fn wire_hit(hit: Hit, client: &dyn MusicApi) -> Option<wire::Hit> {
             None,
         ),
     };
-    let link = client.share_url(media, &id)?;
+    let link = client.share_url(media, &id).unwrap_or_else(|| {
+        // A provider with no share url of its own still needs a link the command line can hand
+        // back to `play`, `add` or `play-next`. It names the provider and carries the id apart
+        // from the path, so an id with a slash or a space survives the round trip.
+        let kind = match media {
+            MediaKind::Track => "track",
+            MediaKind::Album => "album",
+            MediaKind::Artist => "artist",
+            MediaKind::Playlist => "playlist",
+        };
+        format!("sonora://{slug}/{kind}?id={}", music::escape::component(&id))
+    });
     Some(wire::Hit {
         kind,
         title,
