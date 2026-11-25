@@ -11,8 +11,9 @@ use clap::{
 use clap_complete::Shell;
 
 use crate::commands::{
-    CommandType, Format, Item, Kind, Level, Local, PlaybackCommand, ProviderCommand, QueueCommand,
-    Repeat, Request, SearchQuery, SessionCommand, Switch, Time, Watch,
+    CommandType, Format, Item, Kind, Level, Local, PlaybackCommand, PlaylistCommand,
+    ProviderCommand, QueueCommand, Repeat, Request, SearchQuery, SessionCommand, Switch, Time,
+    Watch,
 };
 use crate::item;
 
@@ -148,6 +149,11 @@ enum Sub {
         #[command(subcommand)]
         action: Option<SessionSub>,
     },
+    /// List the playlists, or make one or add links of the current provider to it.
+    Playlist {
+        #[command(subcommand)]
+        action: Option<PlaylistSub>,
+    },
     /// Print the completion script for a shell.
     Completions { shell: Shell },
 }
@@ -161,6 +167,27 @@ enum SessionSub {
     Join { code: Option<String> },
     /// Leave the session, which ends it for everyone when Sonora hosts it.
     Leave,
+}
+
+/// What `sonora playlist` does with a playlist.
+#[derive(Subcommand)]
+enum PlaylistSub {
+    /// Print the playlists: id, name and track count.
+    List,
+    /// Make an empty playlist and print its id.
+    Create {
+        /// The name, which may take more than one word.
+        #[arg(required = true, num_args = 1..)]
+        name: Vec<String>,
+    },
+    /// Add links of the current provider to a playlist.
+    Add {
+        /// The id `sonora playlist` prints.
+        id: String,
+        /// Links of the current provider, as `sonora search` prints them.
+        #[arg(required = true, value_hint = ValueHint::Url, value_parser = linked)]
+        items: Vec<Item>,
+    },
 }
 
 /// A search to take the best hit of, in place of files or links.
@@ -315,6 +342,14 @@ fn into_command(args: Args, line: &mut Command) -> Result<CommandType, clap::Err
             Some(SessionSub::Join { code }) => SessionCommand::Join(code),
             Some(SessionSub::Leave) => SessionCommand::Leave,
         }),
+        Sub::Playlist { action } => Request::Playlist(match action {
+            None | Some(PlaylistSub::List) => PlaylistCommand::List,
+            Some(PlaylistSub::Create { name }) => PlaylistCommand::Create(name.join(" ")),
+            Some(PlaylistSub::Add { id, items }) => PlaylistCommand::Add {
+                playlist: id,
+                items,
+            },
+        }),
         Sub::Completions { shell } => return Ok(CommandType::Local(Local::Completions(shell))),
     };
     Ok(CommandType::Remote(request, format))
@@ -439,6 +474,15 @@ fn queued(text: &str) -> Result<Item, String> {
     match path.exists() {
         true => Ok(Item::Path(path)),
         false => Err(format!("no file at '{}'", path.display())),
+    }
+}
+
+/// An item to add to a playlist as typed: a link of the current provider, and nothing else,
+/// since a playlist lives on the provider and takes only its own tracks.
+fn linked(text: &str) -> Result<Item, String> {
+    match item::is_address(text) {
+        true => Ok(Item::Link(text.to_owned())),
+        false => Err(format!("'{text}' is no link of the current provider")),
     }
 }
 

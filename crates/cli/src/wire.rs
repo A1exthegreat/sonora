@@ -46,6 +46,19 @@ pub enum Value {
     Hits(Vec<Hit>),
     /// The Sonora Session Sonora is in, `None` while it is in none.
     Session(Option<SessionInfo>),
+    /// The playlists the current provider keeps.
+    Playlists(Vec<PlaylistInfo>),
+    /// The id of a playlist just made.
+    Created(String),
+}
+
+/// A playlist as `sonora playlist` prints it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlaylistInfo {
+    pub id: String,
+    pub name: String,
+    /// How many tracks it holds; zero also stands for a count the provider does not report.
+    pub tracks: u32,
 }
 
 /// A Sonora Session as `sonora session` prints it.
@@ -184,6 +197,10 @@ pub enum Failure {
     Busy,
     /// A search to queue the best hit of found nothing.
     NothingFound(String),
+    /// The playlists could not be read from the provider.
+    PlaylistsUnreadable,
+    /// A playlist write the provider refused, naming the playlist or the name it was about.
+    PlaylistFailed(String),
 }
 
 /// Why a line could not be read off the socket.

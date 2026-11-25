@@ -12,6 +12,8 @@ const NOT_RUNNING: u8 = 3;
 /// The headers of `sonora providers` and `sonora search`.
 const PROVIDERS: [&str; 2] = ["provider", "status"];
 const HITS: [&str; 5] = ["type", "title", "by", "length", "link"];
+/// The headers of `sonora playlist`.
+const PLAYLISTS: [&str; 3] = ["id", "name", "tracks"];
 
 /// Carries out a command that needs no running Sonora.
 pub fn local(local: Local) -> ExitCode {
@@ -151,6 +153,18 @@ fn show(value: &Value) -> String {
             },
             session.members.join(", ")
         ),
+        Value::Playlists(playlists) if playlists.is_empty() => String::new(),
+        Value::Playlists(playlists) => table(
+            PLAYLISTS,
+            playlists.iter().map(|playlist| {
+                [
+                    playlist.id.clone(),
+                    playlist.name.clone(),
+                    playlist.tracks.to_string(),
+                ]
+            }),
+        ),
+        Value::Created(id) => id.clone(),
     }
 }
 
@@ -165,6 +179,8 @@ fn json(value: &Value) -> String {
         Value::Provider(slug) => serde_json::to_string(slug),
         Value::Hits(hits) => serde_json::to_string(hits),
         Value::Session(session) => serde_json::to_string(session),
+        Value::Playlists(playlists) => serde_json::to_string(playlists),
+        Value::Created(id) => serde_json::to_string(id),
     };
     printed.unwrap_or_default()
 }
@@ -226,5 +242,9 @@ fn describe(failure: &Failure) -> String {
         Failure::SignInFailed(name) => format!("{name} did not sign in"),
         Failure::Busy => "a sign-in is already on its way; try again in a moment".to_owned(),
         Failure::NothingFound(query) => format!("nothing found for '{query}'"),
+        Failure::PlaylistsUnreadable => "the provider could not list the playlists".to_owned(),
+        Failure::PlaylistFailed(what) => {
+            format!("the provider refused the playlist change for '{what}'")
+        }
     }
 }

@@ -46,6 +46,8 @@ pub enum Request {
     Watch(Watch),
     /// Commands serving Sonora Session, listening together with other Sonora apps
     Session(SessionCommand),
+    /// Commands serving playlist manipulation
+    Playlist(PlaylistCommand),
 }
 
 impl Request {
@@ -136,6 +138,18 @@ pub enum SessionCommand {
     Join(Option<String>),
     /// Leaves the session, ending it when Sonora hosts it. Stands for `sonora session leave`
     Leave,
+}
+
+/// Commands serving playlist manipulation
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PlaylistCommand {
+    /// Lists the playlists. Stands for `sonora playlist`
+    List,
+    /// Makes an empty playlist and answers with its id. Stands for `sonora playlist create <name>`
+    Create(String),
+    /// Adds links of the current provider to a playlist. Stands for `sonora playlist add <id> <links>`
+    Add { playlist: String, items: Vec<Item> },
 }
 
 /// Commands serving queue manipulation

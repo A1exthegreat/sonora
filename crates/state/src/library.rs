@@ -2104,6 +2104,21 @@ impl Library {
         );
     }
 
+    /// Records a playlist the command line made, so the lists show it without a reload.
+    pub fn note_playlist_created(&mut self, playlist: Playlist, cx: &mut Context<Self>) {
+        self.insert_playlist(playlist, cx);
+    }
+
+    /// Records tracks the command line added, so an open playlist page shows them.
+    pub fn note_playlist_tracks(
+        &mut self,
+        playlist_id: &str,
+        track_ids: Vec<String>,
+        cx: &mut Context<Self>,
+    ) {
+        self.note_added(playlist_id, track_ids, cx);
+    }
+
     pub fn add_to_playlist(
         &mut self,
         playlist_id: String,

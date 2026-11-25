@@ -4,8 +4,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use cli::commands::{
-    self, Item, Kind, Level, PlaybackCommand, ProviderCommand, QueueCommand, Request, SearchQuery,
-    SessionCommand, Switch, Time, Watch,
+    self, Item, Kind, Level, PlaybackCommand, PlaylistCommand, ProviderCommand, QueueCommand,
+    Request, SearchQuery, SessionCommand, Switch, Time, Watch,
 };
 use cli::wire::{self, Current, Failure, Reply, SessionInfo, State, Value};
 use futures::future;
@@ -188,6 +188,7 @@ impl Control {
             Request::Queue(command) => return self.queue(command, reply, cx),
             Request::Provider(command) => return self.provider(command, reply, cx),
             Request::Search(query) => return self.search(query, reply, cx),
+            Request::Playlist(command) => return self.playlist(command, reply, cx),
             Request::Session(command) => session(command, cx),
             // a watch is answered as a stream, by `watch`, and never reaches here
             Request::Watch(_) => Reply::Failed(Failure::Malformed),
@@ -351,6 +352,146 @@ impl Control {
             })
             .ok();
         });
+        self.pending.insert(key, task);
+    }
+
+    /// Lists the playlists, makes one, or adds links to one. A write answers once the provider
+    /// has agreed, so a script can go on to use the id it made.
+    fn playlist(
+        &mut self,
+        command: PlaylistCommand,
+        reply: oneshot::Sender<Reply>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(client) = self.session.read(cx).client() else {
+            reply.send(Reply::Failed(Failure::SignedOut)).ok();
+            return;
+        };
+        let key = self.issued;
+        self.issued += 1;
+        let task = match command {
+            PlaylistCommand::List => {
+                let fetch = Io::global(cx).spawn(async move { client.playlists().await });
+                cx.spawn(async move |this, cx| {
+                    let listed = join(fetch).await;
+                    this.update(cx, |this, _| {
+                        this.pending.remove(&key);
+                        let answer = match listed {
+                            Ok(playlists) => Reply::Value(Value::Playlists(
+                                playlists
+                                    .into_iter()
+                                    .map(|playlist| wire::PlaylistInfo {
+                                        id: playlist.id,
+                                        name: playlist.name,
+                                        tracks: playlist.track_count,
+                                    })
+                                    .collect(),
+                            )),
+                            Err(error) => {
+                                log::warn!("control: cannot list playlists: {error:#}");
+                                Reply::Failed(Failure::PlaylistsUnreadable)
+                            }
+                        };
+                        reply.send(answer).ok();
+                    })
+                    .ok();
+                })
+            }
+            PlaylistCommand::Create(name) => {
+                let about = name.clone();
+                let fetch = Io::global(cx).spawn(async move {
+                    let id = client.create_playlist(&name).await?;
+                    let made = client.playlist(&id).await.ok().map(|detail| detail.playlist);
+                    anyhow::Ok((id, made))
+                });
+                cx.spawn(async move |this, cx| {
+                    let created = join(fetch).await;
+                    this.update(cx, |this, cx| {
+                        this.pending.remove(&key);
+                        let answer = match created {
+                            Ok((id, made)) => {
+                                let playlist = made.unwrap_or_else(|| Playlist {
+                                    id: id.clone(),
+                                    name: about.clone(),
+                                    owned: true,
+                                    ..Default::default()
+                                });
+                                this.library.update(cx, |library, cx| {
+                                    library.note_playlist_created(playlist, cx);
+                                });
+                                Reply::Value(Value::Created(id))
+                            }
+                            Err(error) => {
+                                log::warn!("control: cannot create a playlist: {error:#}");
+                                Reply::Failed(Failure::PlaylistFailed(about))
+                            }
+                        };
+                        reply.send(answer).ok();
+                    })
+                    .ok();
+                })
+            }
+            PlaylistCommand::Add { playlist, items } => {
+                let sources = items
+                    .into_iter()
+                    .map(|item| self.source(item, cx))
+                    .collect::<Result<Vec<_>, _>>();
+                let sources = match sources {
+                    Ok(sources) => sources,
+                    Err(failure) => {
+                        reply.send(Reply::Failed(failure)).ok();
+                        return;
+                    }
+                };
+                let about = playlist.clone();
+                let local = self.session.read(cx).local_provider();
+                let fetch = Io::global(cx).spawn(async move {
+                    let fetched = future::try_join_all(
+                        sources
+                            .into_iter()
+                            .map(|source| fetch(source, &local, Some(&client))),
+                    )
+                    .await;
+                    let batches = match fetched {
+                        Ok(batches) => batches,
+                        Err(missed) => return anyhow::Ok(Err(missed.failure)),
+                    };
+                    let ids = batches
+                        .into_iter()
+                        .flat_map(|batch| batch.tracks)
+                        .filter_map(|track| track.id)
+                        .collect::<Vec<_>>();
+                    if ids.is_empty() {
+                        return anyhow::Ok(Err(Failure::PlaylistFailed(playlist)));
+                    }
+                    match client.add_tracks_to_playlist(&playlist, &ids).await {
+                        Ok(()) => anyhow::Ok(Ok((playlist, ids))),
+                        Err(error) => Err(error),
+                    }
+                });
+                cx.spawn(async move |this, cx| {
+                    let added = join(fetch).await;
+                    this.update(cx, |this, cx| {
+                        this.pending.remove(&key);
+                        let answer = match added {
+                            Ok(Ok((playlist, ids))) => {
+                                this.library.update(cx, |library, cx| {
+                                    library.note_playlist_tracks(&playlist, ids, cx);
+                                });
+                                Reply::Done
+                            }
+                            Ok(Err(failure)) => Reply::Failed(failure),
+                            Err(error) => {
+                                log::warn!("control: cannot add to a playlist: {error:#}");
+                                Reply::Failed(Failure::PlaylistFailed(about))
+                            }
+                        };
+                        reply.send(answer).ok();
+                    })
+                    .ok();
+                })
+            }
+        };
         self.pending.insert(key, task);
     }
 
