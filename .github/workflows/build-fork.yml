@@ -52,9 +52,12 @@ jobs:
           rev="$(git rev-parse --short=7 HEAD)"
           version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)"
           name="sonora-fork-${version}-${rev}-x86_64-linux"
+          tag="fork-v${version}-${rev}"
           strip --strip-all target/release/sonora -o sonora
           echo "name=$name" >> "$GITHUB_OUTPUT"
-          echo "file=$name" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "rev=$rev" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
           ls -l sonora
           sha256sum sonora | tee "$name.sha256"
 
@@ -67,26 +70,16 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      - name: GitHub release (tags only)
-        if: startsWith(github.ref, 'refs/tags/')
+      # Public, anonymous release asset. nixos-config pins this URL + the
+      # sha256 in packages/custom/sonora/fork-binary.nix.
+      # URL pattern:
+      #   https://github.com/A1exthegreat/sonora/releases/download/fork-v<version>-<rev>/sonora-fork-<version>-<rev>-x86_64-linux
+      - name: GitHub release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.pkg.outputs.tag }}
+          name: ${{ steps.pkg.outputs.tag }}
+          make_latest: false
           files: |
             sonora
             ${{ steps.pkg.outputs.name }}.sha256
-
-      # Optional: push to the GitLab Package Registry. Runs only when the
-      # GITLAB_TOKEN secret exists; the token needs write_package_registry.
-      - name: GitLab Package Registry
-        if: env.GITLAB_TOKEN != ''
-        env:
-          GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
-        run: |
-          set -euo pipefail
-          name='${{ steps.pkg.outputs.name }}'
-          url="https://git.ustc.edu.cn/api/v4/projects/Alex_C%2Fnixos-config/packages/generic/sonora-fork/${name}/${name}"
-          curl --fail-with-body --silent --show-error \
-            --request PUT \
-            --header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
-            --upload-file sonora \
-            "$url"
