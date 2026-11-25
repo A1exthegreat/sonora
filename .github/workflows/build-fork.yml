@@ -1,0 +1,92 @@
+name: build-sonora-fork
+
+# Builds the patched fork on a public GitHub runner and publishes the Linux
+# binary. The canonical source lives at git.ustc.edu.cn/Alex_C/sonora; this
+# repository is a mirror used only for CI (GPLv3 allows the public mirror).
+on:
+  workflow_dispatch:
+  push:
+    tags: [ 'fork-v*' ]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_PROFILE_RELEASE_STRIP: symbols
+  RUSTC_WRAPPER: sccache
+  SCCACHE_GHA_ENABLED: "true"
+
+jobs:
+  linux-x86_64:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: system dependencies (same list as upstream ci.yml)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config cmake mold \
+            libasound2-dev libfontconfig1-dev libfreetype-dev libsqlite3-dev \
+            libx11-dev libxcb1-dev libxcursor-dev libxi-dev \
+            libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
+            libvulkan-dev libdbus-1-dev
+
+      - uses: dtolnay/rust-toolchain@1.98.1
+
+      - uses: mozilla-actions/sccache-action@v0.0.9
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: sonora-fork-linux
+          cache-targets: false
+          cache-on-failure: true
+
+      - name: build
+        run: cargo build --release --locked --package sonora
+
+      - name: package
+        id: pkg
+        run: |
+          set -euo pipefail
+          rev="$(git rev-parse --short=7 HEAD)"
+          version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)"
+          name="sonora-fork-${version}-${rev}-x86_64-linux"
+          strip --strip-all target/release/sonora -o sonora
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "file=$name" >> "$GITHUB_OUTPUT"
+          ls -l sonora
+          sha256sum sonora | tee "$name.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.pkg.outputs.name }}
+          path: |
+            sonora
+            ${{ steps.pkg.outputs.name }}.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: GitHub release (tags only)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            sonora
+            ${{ steps.pkg.outputs.name }}.sha256
+
+      # Optional: push to the GitLab Package Registry. Runs only when the
+      # GITLAB_TOKEN secret exists; the token needs write_package_registry.
+      - name: GitLab Package Registry
+        if: env.GITLAB_TOKEN != ''
+        env:
+          GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
+        run: |
+          set -euo pipefail
+          name='${{ steps.pkg.outputs.name }}'
+          url="https://git.ustc.edu.cn/api/v4/projects/Alex_C%2Fnixos-config/packages/generic/sonora-fork/${name}/${name}"
+          curl --fail-with-body --silent --show-error \
+            --request PUT \
+            --header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
+            --upload-file sonora \
+            "$url"
