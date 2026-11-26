@@ -9,8 +9,10 @@ The listener can decide about the track that is playing without leaving the play
 | `l` | favorite | Toggles the heart, through the same path as the player-bar button |
 | `x` | discard | Appends a `discard` decision and plays the next track |
 
-The keys are registered in `crates/input/src/lib.rs` and handled in
-`crates/sonora/src/actions.rs`.
+The shortcuts are registered in `crates/input/src/lib.rs` and handled in
+`crates/sonora/src/actions.rs`. Discard is a decision, not a delete: it records that the track
+should be left out and skips it, leaving the provider and the queue untouched so the AI side can
+act on the log.
 
 ## Contexts and conflicts
 
