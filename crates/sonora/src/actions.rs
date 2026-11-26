@@ -198,38 +198,36 @@ fn rate(cx: &mut App, stars: u8) {
         false => Sonora::global(cx).session.read(cx).client(),
     };
     decisions::record(decisions::Choice::Rate(stars), &track, provider);
-    match client {
-        None => {
-            Toasts::post(rated(stars, track.name.clone()), cx);
-        }
-        Some(client) => {
-            let io = Io::global(cx);
-            let name = track.name.clone();
-            cx.spawn(async move |cx| {
-                let failed = match io
-                    .spawn(async move { client.set_track_rating(&id, stars).await })
-                    .await
-                {
-                    Ok(Ok(())) => false,
-                    Ok(Err(error)) => {
-                        log::warn!("rating: cannot set {stars} stars: {error:#}");
-                        true
-                    }
-                    Err(error) => {
-                        log::warn!("rating: the rating task failed: {error}");
-                        true
-                    }
-                };
-                cx.update(|cx| match failed {
-                    true => Toasts::post(
+    let name = track.name.clone();
+    let toast = Toasts::post(rated(stars, name.clone()), cx);
+    if let Some(client) = client {
+        let io = Io::global(cx);
+        cx.spawn(async move |cx| {
+            let failed = match io
+                .spawn(async move { client.set_track_rating(&id, stars).await })
+                .await
+            {
+                Ok(Ok(())) => false,
+                Ok(Err(error)) => {
+                    log::warn!("rating: cannot set {stars} stars: {error:#}");
+                    true
+                }
+                Err(error) => {
+                    log::warn!("rating: the rating task failed: {error}");
+                    true
+                }
+            };
+            if failed {
+                cx.update(|cx| {
+                    Toasts::settle(
+                        toast,
                         Toast::new(Outcome::Failed, "toast-rating-failed").name(name),
                         cx,
-                    ),
-                    false => Toasts::post(rated(stars, name), cx),
+                    );
                 });
-            })
-            .detach();
-        }
+            }
+        })
+        .detach();
     }
 }
 
