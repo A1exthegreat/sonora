@@ -27,6 +27,9 @@ pub enum Format {
 pub enum Local {
     /// Prints the completion script for a shell. Stands for `sonora completions <shell>`
     Completions(Shell),
+    /// Prints what the listener decided about the tracks that played. Stands for
+    /// `sonora decisions`
+    Decisions { limit: usize, format: Format },
 }
 
 /// CLI commands that need to sent request to the running `Sonora` application

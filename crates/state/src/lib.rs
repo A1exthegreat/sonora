@@ -2,6 +2,7 @@ mod artist;
 mod catalog;
 mod control;
 mod cover;
+pub mod decisions;
 mod detail;
 mod devices;
 mod discord;

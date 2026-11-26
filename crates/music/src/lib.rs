@@ -180,6 +180,12 @@ pub trait MusicApi: Send + Sync {
 
     async fn set_track_saved(&self, track_id: &str, saved: bool) -> Result<()>;
 
+    /// Sets this account's rating for a track, from 0 (no rating) to 5. A provider without
+    /// ratings keeps the default and makes no request.
+    async fn set_track_rating(&self, _track_id: &str, _rating: u8) -> Result<()> {
+        anyhow::bail!("this provider cannot rate tracks")
+    }
+
     /// Reads what the file itself says, for a provider whose tracks are files.
     async fn track_tags(&self, _track_id: &str) -> Result<TrackTags> {
         anyhow::bail!("this provider cannot edit tags")

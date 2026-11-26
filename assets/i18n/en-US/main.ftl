@@ -1303,6 +1303,10 @@ toast-favorite-artists-removed = Removed { $count ->
         [one] one artist
        *[other] { $count } artists
     } from your favorites
+toast-rated = Rated { $name } { $count }/5
+toast-rating-cleared = Cleared the rating of { $name }
+toast-rating-failed = Could not rate { $name }
+toast-discarded = Discarded { $name }
 toast-tracks-removed = Removed { $count ->
         [one] one song
        *[other] { $count } songs

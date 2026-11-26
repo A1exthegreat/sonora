@@ -1,12 +1,13 @@
 use gpui::{App, Context, Menu, MenuItem, OsAction};
 use i18n::t;
 use input::{
-    CloseWindow, DecreaseFontSize, Hide, HideOthers, IncreaseFontSize, MinimizeWindow,
-    OpenSettings, Quit, Redo, Refresh, ResetFontSize, ShowAll, SignOut, SongNext, SongPrevious,
-    TogglePlayback, ToggleRepeat, ToggleShuffle, Undo, ZoomWindow,
+    ClearRating, CloseWindow, DecreaseFontSize, DiscardTrack, Hide, HideOthers, IncreaseFontSize,
+    MinimizeWindow, OpenSettings, Quit, RateFive, RateFour, RateOne, RateThree, RateTwo, Redo,
+    Refresh, ResetFontSize, ShowAll, SignOut, SongNext, SongPrevious, TogglePlayback,
+    ToggleRepeat, ToggleShuffle, ToggleTrackSaved, Undo, ZoomWindow,
 };
 use router::Destination;
-use state::{AppSettings, Equalizer, Shelf, Sonora};
+use state::{decisions, AppSettings, Equalizer, Io, Outcome, Shelf, Sonora, Toast, Toasts};
 use ui::{ActiveTheme as _, Copy, Cut, Look, Paste, SelectAll, Theme};
 
 /// How far one font size shortcut moves the size, the same step as the buttons in Settings.
@@ -81,6 +82,15 @@ pub fn register(lingers: bool, cx: &mut App) {
         let playback = Sonora::global(cx).playback.clone();
         playback.update(cx, |playback, cx| playback.toggle_repeat(cx));
     });
+
+    cx.on_action(|_: &RateOne, cx: &mut App| rate(cx, 1));
+    cx.on_action(|_: &RateTwo, cx: &mut App| rate(cx, 2));
+    cx.on_action(|_: &RateThree, cx: &mut App| rate(cx, 3));
+    cx.on_action(|_: &RateFour, cx: &mut App| rate(cx, 4));
+    cx.on_action(|_: &RateFive, cx: &mut App| rate(cx, 5));
+    cx.on_action(|_: &ClearRating, cx: &mut App| rate(cx, 0));
+    cx.on_action(|_: &ToggleTrackSaved, cx: &mut App| toggle_saved(cx));
+    cx.on_action(|_: &DiscardTrack, cx: &mut App| discard(cx));
 
     cx.on_action(|_: &Undo, cx: &mut App| edit_equalizer(cx, Equalizer::undo));
     cx.on_action(|_: &Redo, cx: &mut App| edit_equalizer(cx, Equalizer::redo));
@@ -162,6 +172,108 @@ fn edit_equalizer(cx: &mut App, edit: fn(&mut Equalizer, &mut Context<Equalizer>
         let equalizer = Sonora::global(cx).equalizer.clone();
         equalizer.update(cx, edit);
     }
+}
+
+/// The track a rating shortcut acts on: the one the player shows, which is the other device's
+/// while steering, and the provider whose id it is.
+fn shown(cx: &App) -> Option<(music::Track, Option<String>)> {
+    let sonora = Sonora::global(cx);
+    let track = sonora.playback.read(cx).shown_track(cx)?;
+    let id = track.id.as_deref()?;
+    let provider = match music::is_local_id(id) {
+        true => Some("local".to_owned()),
+        false => sonora.session.read(cx).provider_slug().map(str::to_owned),
+    };
+    Some((track, provider))
+}
+
+/// Rates the track shown, records the decision and tells the provider that keeps ratings.
+fn rate(cx: &mut App, stars: u8) {
+    let Some((track, provider)) = shown(cx) else {
+        return;
+    };
+    let id = track.id.clone().expect("shown returns a track with an id");
+    let client = match music::is_local_id(&id) {
+        true => None,
+        false => Sonora::global(cx).session.read(cx).client(),
+    };
+    decisions::record(decisions::Choice::Rate(stars), &track, provider);
+    match client {
+        None => {
+            Toasts::post(rated(stars, track.name.clone()), cx);
+        }
+        Some(client) => {
+            let io = Io::global(cx);
+            let name = track.name.clone();
+            cx.spawn(async move |cx| {
+                let failed = match io
+                    .spawn(async move { client.set_track_rating(&id, stars).await })
+                    .await
+                {
+                    Ok(Ok(())) => false,
+                    Ok(Err(error)) => {
+                        log::warn!("rating: cannot set {stars} stars: {error:#}");
+                        true
+                    }
+                    Err(error) => {
+                        log::warn!("rating: the rating task failed: {error}");
+                        true
+                    }
+                };
+                cx.update(|cx| match failed {
+                    true => Toasts::post(
+                        Toast::new(Outcome::Failed, "toast-rating-failed").name(name),
+                        cx,
+                    ),
+                    false => Toasts::post(rated(stars, name), cx),
+                });
+            })
+            .detach();
+        }
+    }
+}
+
+/// The toast that says a rating landed, with `stars` out of five, or that it was cleared.
+fn rated(stars: u8, name: String) -> Toast {
+    let mut toast = Toast::new(
+        Outcome::Done,
+        match stars {
+            0 => "toast-rating-cleared",
+            _ => "toast-rated",
+        },
+    )
+    .name(name);
+    if stars > 0 {
+        toast = toast.count(usize::from(stars));
+    }
+    toast
+}
+
+/// Saves the track shown to the library, or takes it out, and records the decision.
+fn toggle_saved(cx: &mut App) {
+    let Some((track, provider)) = shown(cx) else {
+        return;
+    };
+    let id = track.id.clone().expect("shown returns a track with an id");
+    let sonora = Sonora::global(cx);
+    let saved = sonora.library.read(cx).saved(&id);
+    let library = sonora.library.clone();
+    decisions::record(decisions::Choice::Favorite(!saved), &track, provider);
+    library.update(cx, |library, cx| library.toggle(track, cx));
+}
+
+/// Records that the track shown is to be left out, then plays the next one.
+fn discard(cx: &mut App) {
+    let Some((track, provider)) = shown(cx) else {
+        return;
+    };
+    decisions::record(decisions::Choice::Discard, &track, provider);
+    Toasts::post(
+        Toast::new(Outcome::Done, "toast-discarded").name(track.name.clone()),
+        cx,
+    );
+    let playback = Sonora::global(cx).playback.clone();
+    playback.update(cx, |playback, cx| playback.next(cx));
 }
 
 /// Applies `change` to the saved font size and redraws with it, keeping the cover tint the

@@ -18,6 +18,14 @@ actions!(
         SongNext,
         ToggleShuffle,
         ToggleRepeat,
+        RateOne,
+        RateTwo,
+        RateThree,
+        RateFour,
+        RateFive,
+        ClearRating,
+        ToggleTrackSaved,
+        DiscardTrack,
         NavigateBack,
         NavigateForward,
         OpenFilter,
@@ -68,6 +76,11 @@ fn shared() -> Vec<KeyBinding> {
     );
     let results = format!("{SEARCH_CONTEXT} && !{INPUT_CONTEXT}");
     let typing = format!("{SEARCH_CONTEXT} > {INPUT_CONTEXT}");
+    // The rating shortcuts work wherever a track shows, including while a track table has focus,
+    // but never while text, a menu or a form takes the keys.
+    let rating = format!(
+        "{WORKSPACE_CONTEXT} && !{INPUT_CONTEXT} && !{MENU_CONTEXT} && !{FORM_CONTEXT}"
+    );
 
     vec![
         KeyBinding::new("down", SelectNext, table),
@@ -119,6 +132,14 @@ fn shared() -> Vec<KeyBinding> {
         KeyBinding::new("space", TogglePlayback, Some(&away_from_text)),
         KeyBinding::new("ctrl-left", SongPrevious, Some(&away_from_text)),
         KeyBinding::new("ctrl-right", SongNext, Some(&away_from_text)),
+        KeyBinding::new("0", ClearRating, Some(&rating)),
+        KeyBinding::new("1", RateOne, Some(&rating)),
+        KeyBinding::new("2", RateTwo, Some(&rating)),
+        KeyBinding::new("3", RateThree, Some(&rating)),
+        KeyBinding::new("4", RateFour, Some(&rating)),
+        KeyBinding::new("5", RateFive, Some(&rating)),
+        KeyBinding::new("l", ToggleTrackSaved, Some(&rating)),
+        KeyBinding::new("x", DiscardTrack, Some(&rating)),
         KeyBinding::new("f", ToggleFullscreen, Some(&away_from_text)),
         KeyBinding::new("f11", ToggleWindowFullscreen, None),
         KeyBinding::new("cmd-z", Undo, Some(&away_from_text)),

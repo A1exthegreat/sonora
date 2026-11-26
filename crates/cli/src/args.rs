@@ -154,6 +154,12 @@ enum Sub {
         #[command(subcommand)]
         action: Option<PlaylistSub>,
     },
+    /// Print the recent rating, favorite and discard decisions, oldest first.
+    Decisions {
+        /// How many of the newest decisions to print; 0 prints every one.
+        #[arg(long, short = 'n', default_value_t = 50)]
+        limit: usize,
+    },
     /// Print the completion script for a shell.
     Completions { shell: Shell },
 }
@@ -350,6 +356,9 @@ fn into_command(args: Args, line: &mut Command) -> Result<CommandType, clap::Err
                 items,
             },
         }),
+        Sub::Decisions { limit } => {
+            return Ok(CommandType::Local(Local::Decisions { limit, format }));
+        }
         Sub::Completions { shell } => return Ok(CommandType::Local(Local::Completions(shell))),
     };
     Ok(CommandType::Remote(request, format))

@@ -3,6 +3,7 @@ use std::process::ExitCode;
 
 use crate::args;
 use crate::commands::{Format, Kind, Local, Repeat, Request};
+use crate::decisions::{self, Action};
 use crate::wire::{self, Failure, Reply, Value};
 
 /// The running Sonora refused the command, or the exchange broke.
@@ -14,13 +15,18 @@ const PROVIDERS: [&str; 2] = ["provider", "status"];
 const HITS: [&str; 5] = ["type", "title", "by", "length", "link"];
 /// The headers of `sonora playlist`.
 const PLAYLISTS: [&str; 3] = ["id", "name", "tracks"];
+/// The headers of `sonora decisions`.
+const DECISIONS: [&str; 6] = ["when", "action", "value", "title", "artist", "id"];
 
 /// Carries out a command that needs no running Sonora.
 pub fn local(local: Local) -> ExitCode {
     match local {
-        Local::Completions(shell) => args::completions(shell),
+        Local::Completions(shell) => {
+            args::completions(shell);
+            ExitCode::SUCCESS
+        }
+        Local::Decisions { limit, format } => decisions(limit, format),
     }
-    ExitCode::SUCCESS
 }
 
 /// Sends `request` over `stream`, prints the reply in `format` and gives the code to exit with.
@@ -219,6 +225,61 @@ fn clock(seconds: u64) -> String {
         0 => format!("{minutes}:{seconds:02}"),
         _ => format!("{hours}:{minutes:02}:{seconds:02}"),
     }
+}
+
+/// Prints the decisions the app recorded, oldest first. JSON goes one object per line so a
+/// script can follow the file as it grows.
+fn decisions(limit: usize, format: Format) -> ExitCode {
+    let decisions = match decisions::read(limit) {
+        Ok(decisions) => decisions,
+        Err(error) => {
+            eprintln!("sonora: cannot read the decisions: {error}");
+            return ExitCode::from(FAILED);
+        }
+    };
+    match format {
+        Format::Json => {
+            for decision in &decisions {
+                if let Ok(line) = serde_json::to_string(decision) {
+                    println!("{line}");
+                }
+            }
+        }
+        Format::Text if !decisions.is_empty() => {
+            let rows = decisions.iter().map(|decision| {
+                let (action, value) = match &decision.action {
+                    Action::Rate { stars } => ("rate", stars.to_string()),
+                    Action::Favorite { saved } => (
+                        "favorite",
+                        match saved {
+                            true => "saved",
+                            false => "unsaved",
+                        }
+                        .to_owned(),
+                    ),
+                    Action::Discard => ("discard", String::new()),
+                };
+                [
+                    when(decision.at),
+                    action.to_owned(),
+                    value,
+                    decision.track.title.clone(),
+                    decision.track.artist.clone(),
+                    decision.track.id.clone(),
+                ]
+            });
+            println!("{}", table(DECISIONS, rows));
+        }
+        Format::Text => {}
+    }
+    ExitCode::SUCCESS
+}
+
+/// Unix seconds as a timestamp a person can read.
+fn when(at: i64) -> String {
+    jiff::Timestamp::new(at, 0)
+        .map(|stamp| stamp.to_string())
+        .unwrap_or_else(|_| at.to_string())
 }
 
 fn describe(failure: &Failure) -> String {
