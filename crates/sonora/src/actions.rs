@@ -256,6 +256,9 @@ fn toggle_saved(cx: &mut App) {
     let sonora = Sonora::global(cx);
     let saved = sonora.library.read(cx).saved(&id);
     let library = sonora.library.clone();
+    if library.read(cx).pending(&id) {
+        return;
+    }
     decisions::record(decisions::Choice::Favorite(!saved), &track, provider);
     library.update(cx, |library, cx| library.toggle(track, cx));
 }
